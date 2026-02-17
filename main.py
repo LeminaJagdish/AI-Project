@@ -17,7 +17,8 @@ ASTRA_DB_API_ENDPOINT = os.getenv("ASTRA_DB_API_ENDPOINT")
 ASTRA_DB_APPLICATION_TOKEN = os.getenv("ASTRA_DB_APPLICATION_TOKEN")
 
 if not GROQ_API_KEY or not ASTRA_DB_API_ENDPOINT or not ASTRA_DB_APPLICATION_TOKEN:
-    raise ValueError("Missing required environment variables.")
+    st.error("Missing required environment variables.")
+    st.stop()
 
 # --------------------------------------------------
 # Model Configuration
@@ -25,43 +26,31 @@ if not GROQ_API_KEY or not ASTRA_DB_API_ENDPOINT or not ASTRA_DB_APPLICATION_TOK
 
 MODEL_NAME = "llama-3.3-70b-versatile"
 
-
 # --------------------------------------------------
-# Initialize Groq Client
-# --------------------------------------------------
-
-groq_client = Groq(api_key=GROQ_API_KEY)
-
-# --------------------------------------------------
-# Initialize Astra DB
+# Initialize Clients (Cached for Performance)
 # --------------------------------------------------
 
-astra_client = DataAPIClient(ASTRA_DB_APPLICATION_TOKEN)
-db = astra_client.get_database(ASTRA_DB_API_ENDPOINT)
-collection = db.get_collection("github_issues")
+@st.cache_resource
+def init_clients():
+    groq_client = Groq(api_key=GROQ_API_KEY)
+
+    astra_client = DataAPIClient(ASTRA_DB_APPLICATION_TOKEN)
+    db = astra_client.get_database(ASTRA_DB_API_ENDPOINT)
+    collection = db.get_collection("github_issues")
+
+    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+    return groq_client, collection, embedding_model
+
+
+groq_client, collection, embedding_model = init_clients()
 
 # --------------------------------------------------
-# Local Embedding Model (No OpenAI)
+# Embedding Function
 # --------------------------------------------------
-
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 def get_embedding(text: str):
     return embedding_model.encode(text).tolist()
-
-# --------------------------------------------------
-# Add Note to Astra DB (Run Once Then Comment)
-# --------------------------------------------------
-
-def add_note_to_db(note_text: str):
-    embedding = get_embedding(note_text)
-
-    collection.insert_one({
-        "text": note_text,
-        "$vector": embedding
-    })
-
-    print("✅ Note added successfully!")
 
 # --------------------------------------------------
 # Vector Search Tool
@@ -131,9 +120,7 @@ If information is not found in notes, say you don't know.
 
     message = response.choices[0].message
 
-    # If model calls a tool
     if hasattr(message, "tool_calls") and message.tool_calls:
- 
 
         tool_call = message.tool_calls[0]
         arguments = json.loads(tool_call.function.arguments)
@@ -141,7 +128,6 @@ If information is not found in notes, say you don't know.
         if tool_call.function.name == "search_documents":
             tool_result = search_documents(arguments["query"])
 
-        # Send tool result back to model
         second_response = groq_client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
@@ -161,17 +147,32 @@ If information is not found in notes, say you don't know.
     return message.content
 
 # --------------------------------------------------
-# Run Agent
+# Streamlit UI
 # --------------------------------------------------
 
-if __name__ == "__main__":
+st.set_page_config(page_title="AI Chatbot", page_icon="🤖")
+st.title("🤖 AI Knowledge Chatbot")
 
-    # 🔥 Run once to insert notes, then comment out
-    # add_note_to_db("Flash messages are temporary alerts in Flask applications.")
-    # add_note_to_db("Vector databases store embeddings for semantic similarity search.")
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-    question = input("Ask a question: ")
-    answer = agent(question)
+# Display previous messages
+for role, content in st.session_state.messages:
+    with st.chat_message(role):
+        st.markdown(content)
 
-    print("\n🤖 Agent Answer:\n")
-    print(answer)
+# Chat input
+user_input = st.chat_input("Ask a question...")
+
+if user_input:
+    # Display user message
+    st.chat_message("user").markdown(user_input)
+    st.session_state.messages.append(("user", user_input))
+
+    # Generate response
+    with st.spinner("Thinking..."):
+        response = agent(user_input)
+
+    # Display assistant response
+    st.chat_message("assistant").markdown(response)
+    st.session_state.messages.append(("assistant", response))
