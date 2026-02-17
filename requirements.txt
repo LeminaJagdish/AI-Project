@@ -4,6 +4,7 @@ langchain
 astrapy
 langchain-openai
 openai
+SentenceTransformer
 python-dotenv
 tiktoken
 faiss-cpu
