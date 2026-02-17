@@ -1,5 +1,6 @@
 streamlit
 langchain
+astrapy
 langchain-openai
 openai
 python-dotenv
